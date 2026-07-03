@@ -32,6 +32,7 @@ class FakeCodex implements CodexController {
   interrupted: string[] = [];
   resumed: string[] = [];
   started: Array<{ threadId: string; text: string }> = [];
+  failResume = false;
 
   constructor(readonly threads: ThreadRecord[]) {}
 
@@ -44,6 +45,7 @@ class FakeCodex implements CodexController {
   }
 
   async resumeThread(threadId: string): Promise<void> {
+    if (this.failResume) throw new Error("thread/resume failed: no rollout found");
     this.resumed.push(threadId);
   }
 
@@ -108,9 +110,35 @@ describe("BridgeCore", () => {
     expect(telegram.messages.at(-1)!.text).toContain("still running");
   });
 
+  it("reports resume failures to Telegram", async () => {
+    const { core, state, telegram, codex } = makeCore();
+    codex.failResume = true;
+    state.data.selectedThreadByChat["42"] = thread.id;
+    await core.handleText("42", "continue please");
+    expect(codex.started).toEqual([]);
+    expect(telegram.messages.at(-1)!.text).toContain("not a resumable Codex conversation");
+  });
+
   it("ignores unauthorized chats", async () => {
     const { core, telegram } = makeCore();
     await core.handleTelegramUpdate({ update_id: 1, message: { message_id: 1, chat: { id: "99" }, text: "/threads" } });
+    expect(telegram.messages).toHaveLength(0);
+  });
+
+  it("ignores Codex title generation hook events", async () => {
+    const { core, telegram } = makeCore();
+    await core.handleHookEvent({
+      id: "hook-title",
+      receivedAt: Date.now(),
+      cwd: "/repo",
+      argv: [],
+      payload: {
+        type: "agent-turn-complete",
+        "thread-id": "title-thread",
+        "input-messages": ["Generate a concise UI title\n\nUser prompt:\nhi"],
+        "last-assistant-message": "{\"title\":\"Say hi\"}"
+      }
+    });
     expect(telegram.messages).toHaveLength(0);
   });
 });

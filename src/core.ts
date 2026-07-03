@@ -92,11 +92,16 @@ export class BridgeCore {
       await this.telegram.sendMessage(chatId, `This notification is not tied to a resumable Codex thread. Use /threads to choose a real thread.`);
       return;
     }
-    await this.codex.resumeThread(thread.id);
-    await this.codex.startTurn(thread.id, text);
-    this.upsertThread({ ...thread, status: "active", activeFlags: [] });
-    await this.telegram.sendMessage(chatId, `Sent to Codex: ${titleForThread(thread)}`);
-    this.save();
+    try {
+      await this.codex.resumeThread(thread.id);
+      await this.codex.startTurn(thread.id, text);
+      this.upsertThread({ ...thread, status: "active", activeFlags: [] });
+      await this.telegram.sendMessage(chatId, `Sent to Codex: ${titleForThread(thread)}`);
+      this.save();
+    } catch (error) {
+      this.logger.log("codex.continue.error", { threadId: thread.id, error: String(error) });
+      await this.telegram.sendMessage(chatId, `Could not continue "${titleForThread(thread)}": ${friendlyError(error)}\n\nUse /threads and choose a regular Codex thread, or reopen the session in Codex App.`);
+    }
   }
 
   async handleCallback(chatId: string, messageId: number | undefined, callbackData: string, callbackQueryId?: string): Promise<void> {
@@ -140,6 +145,7 @@ export class BridgeCore {
     const payload = typeof event.payload === "object" && event.payload ? event.payload as Record<string, unknown> : {};
     const eventName = String(payload.hook_event_name ?? payload.type ?? "Codex");
     if (/permission|approval/i.test(eventName)) return;
+    if (isTitleGenerationHook(payload)) return;
     const cwd = String(payload.cwd ?? event.cwd);
     let threadId = String(payload.thread_id ?? payload.threadId ?? payload["thread-id"] ?? "");
     if (!threadId && cwd) {
@@ -256,4 +262,24 @@ export class BridgeCore {
 function samePath(a: string | undefined, b: string | undefined): boolean {
   if (!a || !b) return false;
   return a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+}
+
+function isTitleGenerationHook(payload: Record<string, unknown>): boolean {
+  const summary = String(payload.last_assistant_message ?? payload["last-assistant-message"] ?? "");
+  const inputMessages = Array.isArray(payload["input-messages"]) ? payload["input-messages"].map(String) : [];
+  if (inputMessages.some((message) => message.includes("Generate a concise UI title") || message.includes("User prompt:"))) {
+    try {
+      const parsed = JSON.parse(summary) as { title?: unknown };
+      if (typeof parsed.title === "string") return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function friendlyError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("no rollout found")) return "the selected item was not a resumable Codex conversation";
+  return truncateText(message, 220);
 }
