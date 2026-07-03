@@ -153,7 +153,7 @@ Leave `codex-telegram-bridge run` running while you want Telegram notifications 
 
 Every bridge notification includes inline buttons. Select a thread from a message, then send a plain text reply to continue it if it is stopped or idle. Plain text replies are rejected while the selected thread is actively running.
 
-When Codex reports a completed turn through the app-server but the normal notify hook does not arrive, the bridge sends a delayed fallback completion notification. If the hook arrives first, the duplicate is suppressed.
+When any known Codex session stops running, the bridge sends a Telegram notification. It uses Codex notify hooks when available, and falls back to app-server completion or `active` -> `idle`/`systemError` status transitions when hooks do not arrive. Duplicate completion notifications are suppressed.
 
 ## Phone notifications
 

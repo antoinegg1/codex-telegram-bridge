@@ -14,6 +14,8 @@ export declare class BridgeCore {
     refreshThreads(limit?: number): Promise<ThreadRecord[]>;
     notifyStopped(thread: ThreadRecord, status: string, summary: string, eventKey?: string): Promise<void>;
     scheduleCompletionNotice(thread: ThreadRecord, summary: string, eventKey: string): void;
+    scheduleStopNotice(thread: ThreadRecord, status: string, summary: string, eventKey: string): void;
+    updateThreadStatus(threadId: string, status: ThreadRecord["status"], activeFlags: string[]): void;
     notifyUserInput(serverRequestId: string | number, params: {
         threadId: string;
         turnId?: string;

@@ -244,6 +244,31 @@ describe("BridgeCore", () => {
     expect(telegram.messages[0].text).toContain("done via app-server");
   });
 
+  it("sends fallback stop notifications when active threads become idle without turn completion", async () => {
+    vi.useFakeTimers();
+    const { core, state, telegram } = makeCore();
+    state.data.threads[thread.id].status = "active";
+    state.data.activeTurns[thread.id] = "turn-1";
+    core.updateThreadStatus(thread.id, "idle", []);
+    expect(telegram.messages).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(telegram.messages).toHaveLength(1);
+    expect(telegram.messages[0].text).toContain("Status: stopped");
+    expect(telegram.messages[0].text).toContain("Codex stopped running.");
+  });
+
+  it("sends fallback error notifications when active threads enter systemError", async () => {
+    vi.useFakeTimers();
+    const { core, state, telegram } = makeCore();
+    state.data.threads[thread.id].status = "active";
+    state.data.activeTurns[thread.id] = "turn-1";
+    core.updateThreadStatus(thread.id, "systemError", []);
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(telegram.messages).toHaveLength(1);
+    expect(telegram.messages[0].text).toContain("Status: systemError");
+    expect(telegram.messages[0].text).toContain("Codex stopped with a system error.");
+  });
+
   it("does not duplicate completion notifications when hook notification arrives first", async () => {
     vi.useFakeTimers();
     const { core, telegram } = makeCore();

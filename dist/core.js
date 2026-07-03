@@ -54,16 +54,33 @@ export class BridgeCore {
         this.save();
     }
     scheduleCompletionNotice(thread, summary, eventKey) {
+        this.scheduleStopNotice(thread, "completed", summary, eventKey);
+    }
+    scheduleStopNotice(thread, status, summary, eventKey) {
         const key = normalizeStopEventKey(eventKey);
         if (this.seenRecently(key))
             return;
         this.cancelCompletionTimer(key);
         const timer = setTimeout(() => {
             this.completionTimers.delete(key);
-            void this.notifyStopped(thread, "completed", summary, eventKey).catch((error) => this.logger.log("completion.fallback.error", { eventKey, error: String(error) }));
+            void this.notifyStopped(thread, status, summary, eventKey).catch((error) => this.logger.log("completion.fallback.error", { eventKey, error: String(error) }));
         }, completionFallbackDelayMs);
         timer.unref?.();
         this.completionTimers.set(key, timer);
+    }
+    updateThreadStatus(threadId, status, activeFlags) {
+        const thread = this.state.data.threads[threadId];
+        if (!thread)
+            return;
+        const wasActive = thread.status === "active";
+        thread.status = status;
+        thread.activeFlags = activeFlags;
+        this.save();
+        if (wasActive && (status === "idle" || status === "systemError")) {
+            const turnId = this.state.data.activeTurns[threadId] ?? thread.lastTurnId ?? "unknown";
+            const summary = thread.lastSummary || (status === "systemError" ? "Codex stopped with a system error." : "Codex stopped running.");
+            this.scheduleStopNotice(thread, status === "systemError" ? "systemError" : "stopped", summary, `${threadId}:${turnId}:turn-completed`);
+        }
     }
     async notifyUserInput(serverRequestId, params) {
         const thread = this.state.data.threads[params.threadId] ?? await this.codex.readThread(params.threadId) ?? this.syntheticThread(params.threadId);

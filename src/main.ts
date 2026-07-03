@@ -132,10 +132,9 @@ async function handleCodexNotification(core: BridgeCore, message: JsonRecord): P
     const thread = core.state.data.threads[threadId];
     const status = (params.status as JsonRecord | undefined)?.type;
     if (thread && typeof status === "string") {
-      thread.status = status === "active" || status === "idle" || status === "systemError" ? status : "notLoaded";
       const flags = (params.status as JsonRecord | undefined)?.activeFlags;
-      thread.activeFlags = Array.isArray(flags) ? flags.map(String) : [];
-      core.store.save(core.state);
+      const nextStatus = status === "active" || status === "idle" || status === "systemError" ? status : "notLoaded";
+      core.updateThreadStatus(threadId, nextStatus, Array.isArray(flags) ? flags.map(String) : []);
     }
   }
   if (method === "thread/name/updated") {
