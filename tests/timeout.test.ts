@@ -25,8 +25,10 @@ class Codex implements CodexController {
   answers: Array<Record<string, { answers: string[] }>> = [];
   async listThreads(): Promise<ThreadRecord[]> { return [thread]; }
   async readThread(): Promise<ThreadRecord> { return thread; }
+  async startThread(): Promise<ThreadRecord> { return thread; }
   async resumeThread(): Promise<void> {}
   async startTurn(): Promise<void> {}
+  async setGoal(): Promise<void> {}
   async interruptThread(): Promise<void> {}
   async answerUserInput(_: string | number, answers: Record<string, { answers: string[] }>): Promise<void> {
     this.answers.push(answers);

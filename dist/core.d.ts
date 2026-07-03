@@ -9,9 +9,11 @@ export declare class BridgeCore {
     readonly telegram: TelegramTransport;
     readonly codex: CodexController;
     readonly logger: BridgeLogger;
+    private completionTimers;
     constructor(config: BridgeConfig, state: BridgeState, store: StateStore, telegram: TelegramTransport, codex: CodexController, logger: BridgeLogger);
     refreshThreads(limit?: number): Promise<ThreadRecord[]>;
     notifyStopped(thread: ThreadRecord, status: string, summary: string, eventKey?: string): Promise<void>;
+    scheduleCompletionNotice(thread: ThreadRecord, summary: string, eventKey: string): void;
     notifyUserInput(serverRequestId: string | number, params: {
         threadId: string;
         turnId?: string;
@@ -24,6 +26,8 @@ export declare class BridgeCore {
     expirePendingRequests(now?: number): Promise<void>;
     handleHookEvent(event: HookInboxEvent): Promise<void>;
     sendThreadList(chatId: string): Promise<void>;
+    private startNewThread;
+    private setGoal;
     private terminate;
     private answerChoice;
     private threadListMarkup;
@@ -33,9 +37,11 @@ export declare class BridgeCore {
     private formatRequestMessage;
     private formatStatusMessage;
     private selectedThread;
+    private command;
     private authorized;
     private upsertThread;
     private syntheticThread;
     private seenRecently;
     private save;
+    private cancelCompletionTimer;
 }

@@ -49,12 +49,21 @@ export class CodexAppServerClient extends EventEmitter implements CodexControlle
     return thread ? this.threadFromProtocol(thread) : null;
   }
 
+  async startThread(cwd: string): Promise<ThreadRecord> {
+    const response = await this.request("thread/start", { cwd, sessionStartSource: "startup" });
+    return this.threadFromProtocol((response as { thread: JsonRecord }).thread);
+  }
+
   async resumeThread(threadId: string): Promise<void> {
     await this.request("thread/resume", { threadId });
   }
 
   async startTurn(threadId: string, text: string): Promise<void> {
     await this.request("turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }] });
+  }
+
+  async setGoal(threadId: string, objective: string): Promise<void> {
+    await this.request("thread/goal/set", { threadId, objective, status: "active" });
   }
 
   async interruptThread(threadId: string, turnId?: string): Promise<void> {

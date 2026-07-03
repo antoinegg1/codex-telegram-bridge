@@ -103,8 +103,10 @@ export interface TelegramTransport {
 export interface CodexController {
     listThreads(limit?: number): Promise<ThreadRecord[]>;
     readThread(threadId: string): Promise<ThreadRecord | null>;
+    startThread(cwd: string): Promise<ThreadRecord>;
     resumeThread(threadId: string): Promise<void>;
     startTurn(threadId: string, text: string): Promise<void>;
+    setGoal(threadId: string, objective: string): Promise<void>;
     interruptThread(threadId: string, turnId?: string): Promise<void>;
     answerUserInput(serverRequestId: string | number, answers: Record<string, {
         answers: string[];

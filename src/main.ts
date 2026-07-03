@@ -172,6 +172,7 @@ async function handleCodexNotification(core: BridgeCore, message: JsonRecord): P
     if (summary) thread.lastSummary = summary;
     core.state.data.threads[threadId] = thread;
     core.store.save(core.state);
+    core.scheduleCompletionNotice(thread, summary, `${threadId}:${String(turn.id ?? thread.lastTurnId ?? "")}:turn-completed`);
   }
 }
 

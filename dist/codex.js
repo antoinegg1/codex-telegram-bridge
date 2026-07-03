@@ -35,11 +35,18 @@ export class CodexAppServerClient extends EventEmitter {
         const thread = response.thread;
         return thread ? this.threadFromProtocol(thread) : null;
     }
+    async startThread(cwd) {
+        const response = await this.request("thread/start", { cwd, sessionStartSource: "startup" });
+        return this.threadFromProtocol(response.thread);
+    }
     async resumeThread(threadId) {
         await this.request("thread/resume", { threadId });
     }
     async startTurn(threadId, text) {
         await this.request("turn/start", { threadId, input: [{ type: "text", text, text_elements: [] }] });
+    }
+    async setGoal(threadId, objective) {
+        await this.request("thread/goal/set", { threadId, objective, status: "active" });
     }
     async interruptThread(threadId, turnId) {
         if (!turnId)

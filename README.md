@@ -148,8 +148,12 @@ Leave `codex-telegram-bridge run` running while you want Telegram notifications 
 - `/help` shows commands.
 - `/threads` lists recent/active Codex threads.
 - `/status` shows the selected thread without resuming it: title, status flags, thread id, working directory, continuable state, turn id, pending decision count and timeout, current question, and latest summary when available.
+- `/new <message>` starts a new Codex session in the currently selected thread's working directory, sends the first message, and selects the new session.
+- `/goal <objective>` sets or updates the selected Codex thread goal.
 
 Every bridge notification includes inline buttons. Select a thread from a message, then send a plain text reply to continue it if it is stopped or idle. Plain text replies are rejected while the selected thread is actively running.
+
+When Codex reports a completed turn through the app-server but the normal notify hook does not arrive, the bridge sends a delayed fallback completion notification. If the hook arrives first, the duplicate is suppressed.
 
 ## Phone notifications
 

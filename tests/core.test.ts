@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeCore } from "../src/core.js";
 import { BridgeLogger } from "../src/logger.js";
 import { BridgeState, StateStore } from "../src/state.js";
@@ -29,6 +29,8 @@ class FakeTelegram implements TelegramTransport {
 
 class FakeCodex implements CodexController {
   answered: Array<Record<string, { answers: string[] }>> = [];
+  created: string[] = [];
+  goals: Array<{ threadId: string; objective: string }> = [];
   interrupted: string[] = [];
   resumed: string[] = [];
   started: Array<{ threadId: string; text: string }> = [];
@@ -44,6 +46,13 @@ class FakeCodex implements CodexController {
     return this.threads.find((thread) => thread.id === threadId) ?? null;
   }
 
+  async startThread(cwd: string): Promise<ThreadRecord> {
+    this.created.push(cwd);
+    const record: ThreadRecord = { id: `thread-new-${this.created.length}`, title: "New session", cwd, status: "idle", activeFlags: [], updatedAt: Date.now(), continuable: true };
+    this.threads.push(record);
+    return record;
+  }
+
   async resumeThread(threadId: string): Promise<void> {
     if (this.failResume) throw new Error("thread/resume failed: no rollout found");
     this.resumed.push(threadId);
@@ -51,6 +60,10 @@ class FakeCodex implements CodexController {
 
   async startTurn(threadId: string, text: string): Promise<void> {
     this.started.push({ threadId, text });
+  }
+
+  async setGoal(threadId: string, objective: string): Promise<void> {
+    this.goals.push({ threadId, objective });
   }
 
   async interruptThread(threadId: string): Promise<void> {
@@ -83,6 +96,20 @@ function makeCore() {
 }
 
 describe("BridgeCore", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("shows full Telegram help", async () => {
+    const { core, telegram } = makeCore();
+    await core.handleText("42", "/help");
+    const text = telegram.messages.at(-1)!.text;
+    expect(text).toContain("/threads - list recent Codex sessions");
+    expect(text).toContain("/new <message>");
+    expect(text).toContain("/goal <objective>");
+    expect(text).toContain("Text is rejected while the selected session is active.");
+  });
+
   it("answers a choice callback", async () => {
     const { core, state, telegram, codex } = makeCore();
     await core.notifyUserInput("req-1", { threadId: thread.id, turnId: "turn-1", questions: [{ id: "mode", header: "Mode", question: "Pick one", isOther: false, isSecret: false, options: [{ label: "A", description: "alpha" }] }] });
@@ -99,6 +126,32 @@ describe("BridgeCore", () => {
     await core.handleText("42", "continue please");
     expect(codex.resumed).toEqual([thread.id]);
     expect(codex.started).toEqual([{ threadId: thread.id, text: "continue please" }]);
+  });
+
+  it("creates a new selected thread from the selected thread cwd", async () => {
+    const { core, state, telegram, codex } = makeCore();
+    state.data.selectedThreadByChat["42"] = thread.id;
+    await core.handleText("42", "/new Start a fresh task");
+    expect(codex.created).toEqual(["/repo"]);
+    expect(codex.started).toEqual([{ threadId: "thread-new-1", text: "Start a fresh task" }]);
+    expect(state.data.selectedThreadByChat["42"]).toBe("thread-new-1");
+    expect(state.data.threads["thread-new-1"].status).toBe("active");
+    expect(telegram.messages.at(-1)!.text).toContain("Created new Codex session");
+  });
+
+  it("requires a selected cwd before creating a new thread", async () => {
+    const { core, telegram, codex } = makeCore();
+    await core.handleText("42", "/new Start a fresh task");
+    expect(codex.created).toEqual([]);
+    expect(telegram.messages.at(-1)!.text).toContain("Select a thread from the target project first");
+  });
+
+  it("sets the selected thread goal", async () => {
+    const { core, state, telegram, codex } = makeCore();
+    state.data.selectedThreadByChat["42"] = thread.id;
+    await core.handleText("42", "/goal Finish the project and report tests");
+    expect(codex.goals).toEqual([{ threadId: thread.id, objective: "Finish the project and report tests" }]);
+    expect(telegram.messages.at(-1)!.text).toContain("Goal set for Build feature");
   });
 
   it("rejects free text while a thread is active", async () => {
@@ -178,5 +231,26 @@ describe("BridgeCore", () => {
     await core.notifyStopped(thread, "completed", "done once", "thread-1:turn-1:turn-completed");
     await core.notifyStopped(thread, "agent-turn-complete", "done twice", "thread-1:turn-1:hook-stop");
     expect(telegram.messages).toHaveLength(1);
+  });
+
+  it("sends fallback completion notifications when hook notification is missing", async () => {
+    vi.useFakeTimers();
+    const { core, telegram } = makeCore();
+    core.scheduleCompletionNotice(thread, "done via app-server", "thread-1:turn-1:turn-completed");
+    expect(telegram.messages).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(telegram.messages).toHaveLength(1);
+    expect(telegram.messages[0].text).toContain("Status: completed");
+    expect(telegram.messages[0].text).toContain("done via app-server");
+  });
+
+  it("does not duplicate completion notifications when hook notification arrives first", async () => {
+    vi.useFakeTimers();
+    const { core, telegram } = makeCore();
+    core.scheduleCompletionNotice(thread, "done via app-server", "thread-1:turn-1:turn-completed");
+    await core.notifyStopped(thread, "agent-turn-complete", "done via hook", "thread-1:turn-1:hook-stop");
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(telegram.messages).toHaveLength(1);
+    expect(telegram.messages[0].text).toContain("done via hook");
   });
 });

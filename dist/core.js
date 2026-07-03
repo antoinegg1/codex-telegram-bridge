@@ -1,4 +1,22 @@
 import { formatStopMessage, formatThreadList, formatThreadStatus, titleForThread, truncateText } from "./text.js";
+const completionFallbackDelayMs = 7000;
+const telegramHelp = `Commands:
+/help - show this help
+/threads - list recent Codex sessions and select one
+/status - show selected session details without resuming it
+/new <message> - start a new Codex session in the selected session's working directory
+/goal <objective> - set or update the selected session goal
+
+How to reply:
+- Select a thread first with /threads.
+- Send plain text to continue the selected idle/stopped session.
+- Text is rejected while the selected session is active.
+- Use /status while a session is running; it will not interrupt it.
+
+Buttons:
+Select thread - make this Telegram chat target that session
+Continue - select session and prompt you to reply
+Terminate - interrupt active turn or close pending request`;
 export class BridgeCore {
     config;
     state;
@@ -6,6 +24,7 @@ export class BridgeCore {
     telegram;
     codex;
     logger;
+    completionTimers = new Map();
     constructor(config, state, store, telegram, codex, logger) {
         this.config = config;
         this.state = state;
@@ -23,6 +42,8 @@ export class BridgeCore {
     }
     async notifyStopped(thread, status, summary, eventKey) {
         const dedupeKey = eventKey ? normalizeStopEventKey(eventKey) : undefined;
+        if (dedupeKey)
+            this.cancelCompletionTimer(dedupeKey);
         if (dedupeKey && this.seenRecently(dedupeKey))
             return;
         this.upsertThread({ ...thread, status: thread.status === "active" ? "idle" : thread.status, lastSummary: summary });
@@ -31,6 +52,18 @@ export class BridgeCore {
         if (dedupeKey)
             this.state.data.sentEvents[dedupeKey] = Date.now();
         this.save();
+    }
+    scheduleCompletionNotice(thread, summary, eventKey) {
+        const key = normalizeStopEventKey(eventKey);
+        if (this.seenRecently(key))
+            return;
+        this.cancelCompletionTimer(key);
+        const timer = setTimeout(() => {
+            this.completionTimers.delete(key);
+            void this.notifyStopped(thread, "completed", summary, eventKey).catch((error) => this.logger.log("completion.fallback.error", { eventKey, error: String(error) }));
+        }, completionFallbackDelayMs);
+        timer.unref?.();
+        this.completionTimers.set(key, timer);
     }
     async notifyUserInput(serverRequestId, params) {
         const thread = this.state.data.threads[params.threadId] ?? await this.codex.readThread(params.threadId) ?? this.syntheticThread(params.threadId);
@@ -74,17 +107,26 @@ export class BridgeCore {
         }
     }
     async handleText(chatId, text) {
-        if (text === "/help" || text === "/start") {
-            await this.telegram.sendMessage(chatId, "Commands:\n/threads - choose a Codex thread\n/status - show selected thread\n\nSelect a thread first, then send text to continue it when it is stopped or idle.");
+        const parsed = this.command(text);
+        if (parsed?.name === "help" || parsed?.name === "start") {
+            await this.telegram.sendMessage(chatId, telegramHelp);
             return;
         }
-        if (text === "/threads") {
+        if (parsed?.name === "threads") {
             await this.sendThreadList(chatId);
             return;
         }
-        if (text === "/status") {
+        if (parsed?.name === "status") {
             const thread = this.selectedThread(chatId);
             await this.telegram.sendMessage(chatId, thread ? this.formatStatusMessage(thread) : "No thread selected. Use /threads.");
+            return;
+        }
+        if (parsed?.name === "new") {
+            await this.startNewThread(chatId, parsed.arg);
+            return;
+        }
+        if (parsed?.name === "goal") {
+            await this.setGoal(chatId, parsed.arg);
             return;
         }
         const thread = this.selectedThread(chatId);
@@ -173,6 +215,49 @@ export class BridgeCore {
     async sendThreadList(chatId) {
         const threads = await this.refreshThreads(20);
         await this.telegram.sendMessage(chatId, formatThreadList(threads), this.makeThreadListMarkup(threads));
+    }
+    async startNewThread(chatId, prompt) {
+        if (!prompt) {
+            await this.telegram.sendMessage(chatId, "Usage: /new <first message>");
+            return;
+        }
+        const baseThread = this.selectedThread(chatId);
+        if (!baseThread?.cwd) {
+            await this.telegram.sendMessage(chatId, "Select a thread from the target project first with /threads, then use /new <first message>.");
+            return;
+        }
+        try {
+            const thread = await this.codex.startThread(baseThread.cwd);
+            await this.codex.startTurn(thread.id, prompt);
+            const started = { ...thread, title: thread.title || truncateText(prompt, 80), status: "active", activeFlags: [] };
+            this.upsertThread(started);
+            this.state.data.selectedThreadByChat[chatId] = thread.id;
+            this.save();
+            await this.telegram.sendMessage(chatId, `Created new Codex session: ${titleForThread(started)}\nCWD: ${baseThread.cwd}\nSent first message.`, this.threadMarkup(started, false));
+        }
+        catch (error) {
+            this.logger.log("codex.new.error", { cwd: baseThread.cwd, error: String(error) });
+            await this.telegram.sendMessage(chatId, `Could not create a new Codex session: ${friendlyError(error)}`);
+        }
+    }
+    async setGoal(chatId, objective) {
+        if (!objective) {
+            await this.telegram.sendMessage(chatId, "Usage: /goal <objective>");
+            return;
+        }
+        const thread = this.selectedThread(chatId);
+        if (!thread) {
+            await this.telegram.sendMessage(chatId, "Choose a Codex thread first with /threads.");
+            return;
+        }
+        try {
+            await this.codex.setGoal(thread.id, objective);
+            await this.telegram.sendMessage(chatId, `Goal set for ${titleForThread(thread)}:\n${truncateText(objective, 1200)}`);
+        }
+        catch (error) {
+            this.logger.log("codex.goal.error", { threadId: thread.id, error: String(error) });
+            await this.telegram.sendMessage(chatId, `Could not set goal for "${titleForThread(thread)}": ${friendlyError(error)}`);
+        }
     }
     async terminate(chatId, messageId, threadId, requestId) {
         const pending = requestId ? this.state.data.pendingRequests[requestId] : undefined;
@@ -270,6 +355,10 @@ export class BridgeCore {
         const id = this.state.data.selectedThreadByChat[chatId];
         return id ? this.state.data.threads[id] : undefined;
     }
+    command(text) {
+        const match = text.match(/^\/([A-Za-z0-9_]+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/);
+        return match ? { name: match[1].toLowerCase(), arg: (match[2] ?? "").trim() } : undefined;
+    }
     authorized(chatId) {
         return this.config.allowedChatIds.includes(chatId);
     }
@@ -287,6 +376,13 @@ export class BridgeCore {
     }
     save() {
         this.store.save(this.state);
+    }
+    cancelCompletionTimer(key) {
+        const normalized = normalizeStopEventKey(key);
+        const timer = this.completionTimers.get(normalized);
+        if (timer)
+            clearTimeout(timer);
+        this.completionTimers.delete(normalized);
     }
 }
 function samePath(a, b) {
