@@ -84,7 +84,7 @@ export class BridgeCore {
         }
         if (text === "/status") {
             const thread = this.selectedThread(chatId);
-            await this.telegram.sendMessage(chatId, thread ? `Selected: ${titleForThread(thread)}\nStatus: ${formatThreadStatus(thread)}` : "No thread selected. Use /threads.");
+            await this.telegram.sendMessage(chatId, thread ? this.formatStatusMessage(thread) : "No thread selected. Use /threads.");
             return;
         }
         const thread = this.selectedThread(chatId);
@@ -240,6 +240,30 @@ export class BridgeCore {
                 lines.push(`Selected: ${chosen}`);
             lines.push("");
         }
+        return truncateText(lines.join("\n"));
+    }
+    formatStatusMessage(thread) {
+        const lines = [`Selected: ${titleForThread(thread)}`, `Status: ${formatThreadStatus(thread)}`, `Thread ID: ${thread.id}`, `Continuable: ${thread.continuable ? "yes" : "no"}`];
+        if (thread.cwd)
+            lines.push(`CWD: ${thread.cwd}`);
+        const turnId = this.state.data.activeTurns[thread.id] ?? thread.lastTurnId;
+        if (turnId)
+            lines.push(`Turn ID: ${turnId}`);
+        const openRequests = Object.values(this.state.data.pendingRequests).filter((pending) => pending.threadId === thread.id && pending.status === "open").sort((a, b) => a.expiresAt - b.expiresAt);
+        if (openRequests.length > 0) {
+            const pending = openRequests[0];
+            const seconds = Math.max(0, Math.ceil((pending.expiresAt - Date.now()) / 1000));
+            const remaining = seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${seconds}s`;
+            lines.push(`Pending decisions: ${openRequests.length} open, next timeout in ${remaining}`);
+            const questionSummary = pending.questions.map((question) => question.header ? `${question.header}: ${question.question}` : question.question).join(" | ");
+            if (questionSummary)
+                lines.push(`Question: ${truncateText(questionSummary, 600)}`);
+        }
+        else {
+            lines.push("Pending decisions: none");
+        }
+        if (thread.lastSummary)
+            lines.push("", `Last summary:\n${truncateText(thread.lastSummary, 1200)}`);
         return truncateText(lines.join("\n"));
     }
     selectedThread(chatId) {

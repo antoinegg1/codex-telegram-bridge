@@ -110,6 +110,37 @@ describe("BridgeCore", () => {
     expect(telegram.messages.at(-1)!.text).toContain("still running");
   });
 
+  it("shows detailed selected thread status without resuming it", async () => {
+    const { core, state, telegram, codex } = makeCore();
+    state.data.selectedThreadByChat["42"] = thread.id;
+    state.data.activeTurns[thread.id] = "turn-1";
+    state.data.threads[thread.id] = { ...state.data.threads[thread.id], status: "active", activeFlags: ["waitingOnUserInput"], lastTurnId: "turn-1", lastSummary: "Latest assistant summary." };
+    state.data.pendingRequests["req-1"] = {
+      id: "req-1",
+      serverRequestId: "req-1",
+      threadId: thread.id,
+      turnId: "turn-1",
+      questions: [{ id: "mode", header: "Mode", question: "Pick one", isOther: false, isSecret: false, options: [{ label: "A", description: "alpha" }] }],
+      answers: {},
+      chatId: "42",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      status: "open"
+    };
+    await core.handleText("42", "/status");
+    const text = telegram.messages.at(-1)!.text;
+    expect(text).toContain("Selected: Build feature");
+    expect(text).toContain("Status: active (waitingOnUserInput)");
+    expect(text).toContain("Thread ID: thread-1");
+    expect(text).toContain("CWD: /repo");
+    expect(text).toContain("Turn ID: turn-1");
+    expect(text).toContain("Pending decisions: 1 open");
+    expect(text).toContain("Question: Mode: Pick one");
+    expect(text).toContain("Last summary:\nLatest assistant summary.");
+    expect(codex.resumed).toEqual([]);
+    expect(codex.started).toEqual([]);
+  });
+
   it("reports resume failures to Telegram", async () => {
     const { core, state, telegram, codex } = makeCore();
     codex.failResume = true;

@@ -31,6 +31,7 @@ export declare class BridgeCore {
     private threadMarkup;
     private requestMarkup;
     private formatRequestMessage;
+    private formatStatusMessage;
     private selectedThread;
     private authorized;
     private upsertThread;
