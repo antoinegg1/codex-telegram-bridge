@@ -7,7 +7,7 @@ This project does not implement command approval. If Codex asks for command/file
 ## Install
 
 ```sh
-npm install -g github:antoinegg1/codex-telegram-bridge
+npm install -g https://github.com/antoinegg1/codex-telegram-bridge/archive/refs/heads/main.tar.gz
 ```
 
 Set the bot token and the one Telegram chat that may control Codex:
