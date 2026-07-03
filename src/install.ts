@@ -8,12 +8,12 @@ export function codexHome(): string {
   return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
 }
 
-export function installCodexHooks(home = codexHome()): string[] {
+export function installCodexHooks(home = codexHome(), notifyCommand = ["codex-telegram-bridge", "hook", "notify"]): string[] {
   fs.mkdirSync(home, { recursive: true });
   const changed: string[] = [];
   const configPath = path.join(home, "config.toml");
   const previousConfig = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf8") : "";
-  const nextConfig = ensureConfig(previousConfig);
+  const nextConfig = ensureConfig(previousConfig, notifyCommand);
   if (nextConfig !== previousConfig) {
     backup(configPath);
     fs.writeFileSync(configPath, nextConfig, "utf8");
@@ -39,8 +39,8 @@ export function installCodexHooks(home = codexHome()): string[] {
   return changed;
 }
 
-export function ensureConfig(config: string): string {
-  const notifyLine = `notify = [ "codex-telegram-bridge", "hook", "notify" ]`;
+export function ensureConfig(config: string, notifyCommand = ["codex-telegram-bridge", "hook", "notify"]): string {
+  const notifyLine = `notify = [ ${notifyCommand.map(tomlString).join(", ")} ]`;
   const lines = config.split(/\r?\n/);
   const notifyIndex = lines.findIndex((line) => /^\s*notify\s*=/.test(line));
   if (notifyIndex >= 0) lines[notifyIndex] = notifyLine;
@@ -81,4 +81,8 @@ export function removeLegacyTelegramApprovalHooks(raw: string): string {
 
 function backup(filePath: string): void {
   if (fs.existsSync(filePath)) fs.copyFileSync(filePath, `${filePath}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+}
+
+function tomlString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

@@ -27,7 +27,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "install-codex-hooks") {
-    const changed = installCodexHooks();
+    const changed = installCodexHooks(undefined, [process.execPath, process.argv[1], "hook", "notify"]);
     console.log(changed.length > 0 ? `Updated:\n${changed.map((item) => `- ${item}`).join("\n")}` : "Codex hooks already configured.");
     return;
   }
