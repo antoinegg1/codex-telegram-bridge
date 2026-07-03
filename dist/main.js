@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import process from "node:process";
+import { discoverChatId } from "./chat-id.js";
 import { loadConfig } from "./config.js";
 import { CodexAppServerClient, lastAssistantText, requestQuestionsFromProtocol } from "./codex.js";
 import { BridgeCore } from "./core.js";
@@ -25,6 +26,10 @@ async function main() {
     if (command === "install-codex-hooks") {
         const changed = installCodexHooks(undefined, [process.execPath, process.argv[1], "hook", "notify"]);
         console.log(changed.length > 0 ? `Updated:\n${changed.map((item) => `- ${item}`).join("\n")}` : "Codex hooks already configured.");
+        return;
+    }
+    if (command === "chat-id") {
+        await printChatId();
         return;
     }
     if (command === "doctor") {
@@ -100,6 +105,18 @@ async function hookNotify(args) {
     catch {
         process.exitCode = 0;
     }
+}
+async function printChatId() {
+    const token = process.env.CODEX_TG_BOT_TOKEN;
+    if (!token)
+        throw new Error("Missing CODEX_TG_BOT_TOKEN");
+    console.log("Send any message to your Telegram bot now. Waiting up to 60 seconds...");
+    const chatId = await discoverChatId(new TelegramClient(token));
+    console.log(`Detected Telegram chat id: ${chatId}`);
+    console.log("\nPowerShell:");
+    console.log(`[Environment]::SetEnvironmentVariable("CODEX_TG_CHAT_ID", "${chatId}", "User")`);
+    console.log("\nmacOS/Linux:");
+    console.log(`export CODEX_TG_CHAT_ID="${chatId}"`);
 }
 async function handleCodexNotification(core, message) {
     const method = String(message.method);
@@ -201,6 +218,7 @@ Commands:
   run                  Start Telegram long polling and Codex app-server bridge
   hook notify          Receive Codex notify payloads from stdin/argv
   install-codex-hooks  Configure ~/.codex notify hook and global prompt policy
+  chat-id              Discover your Telegram chat id from a bot message
   doctor               Validate environment configuration
 `);
 }

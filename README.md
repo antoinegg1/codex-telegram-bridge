@@ -24,6 +24,14 @@ PowerShell:
 [Environment]::SetEnvironmentVariable("CODEX_TG_CHAT_ID", "123456789", "User")
 ```
 
+To discover `CODEX_TG_CHAT_ID` automatically, set `CODEX_TG_BOT_TOKEN`, send any message to your bot in Telegram, then run:
+
+```sh
+codex-telegram-bridge chat-id
+```
+
+The command waits up to 60 seconds and prints the exact environment-variable command for your shell.
+
 Optional:
 
 ```sh
