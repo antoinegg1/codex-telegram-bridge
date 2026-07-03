@@ -15,11 +15,12 @@ export class BridgeCore {
   }
 
   async notifyStopped(thread: ThreadRecord, status: string, summary: string, eventKey?: string): Promise<void> {
-    if (eventKey && this.seenRecently(eventKey)) return;
+    const dedupeKey = eventKey ? normalizeStopEventKey(eventKey) : undefined;
+    if (dedupeKey && this.seenRecently(dedupeKey)) return;
     this.upsertThread({ ...thread, status: thread.status === "active" ? "idle" : thread.status, lastSummary: summary });
     const markup = this.threadMarkup(thread, true, undefined);
     await this.telegram.sendMessage(this.config.allowedChatIds[0], formatStopMessage(thread, status, summary), markup);
-    if (eventKey) this.state.data.sentEvents[eventKey] = Date.now();
+    if (dedupeKey) this.state.data.sentEvents[dedupeKey] = Date.now();
     this.save();
   }
 
@@ -262,6 +263,10 @@ export class BridgeCore {
 function samePath(a: string | undefined, b: string | undefined): boolean {
   if (!a || !b) return false;
   return a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+}
+
+function normalizeStopEventKey(eventKey: string): string {
+  return eventKey.replace(/:(?:hook-stop|turn-completed)$/, ":stop");
 }
 
 function isTitleGenerationHook(payload: Record<string, unknown>): boolean {

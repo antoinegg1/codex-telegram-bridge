@@ -151,9 +151,10 @@ async function handleCodexNotification(core: BridgeCore, message: JsonRecord): P
     thread.status = "idle";
     thread.activeFlags = [];
     thread.lastTurnId = String(turn.id ?? thread.lastTurnId ?? "");
-    const status = String(turn.status ?? "completed");
-    const summary = lastAssistantText(turn) || thread.lastSummary || status;
-    await core.notifyStopped(thread, status, summary, `${threadId}:${String(turn.id ?? "")}:turn-completed`);
+    const summary = lastAssistantText(turn);
+    if (summary) thread.lastSummary = summary;
+    core.state.data.threads[threadId] = thread;
+    core.store.save(core.state);
   }
 }
 

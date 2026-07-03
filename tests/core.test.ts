@@ -141,4 +141,11 @@ describe("BridgeCore", () => {
     });
     expect(telegram.messages).toHaveLength(0);
   });
+
+  it("deduplicates stop notifications across app-server and hook event keys", async () => {
+    const { core, telegram } = makeCore();
+    await core.notifyStopped(thread, "completed", "done once", "thread-1:turn-1:turn-completed");
+    await core.notifyStopped(thread, "agent-turn-complete", "done twice", "thread-1:turn-1:hook-stop");
+    expect(telegram.messages).toHaveLength(1);
+  });
 });

@@ -22,13 +22,14 @@ export class BridgeCore {
         return threads;
     }
     async notifyStopped(thread, status, summary, eventKey) {
-        if (eventKey && this.seenRecently(eventKey))
+        const dedupeKey = eventKey ? normalizeStopEventKey(eventKey) : undefined;
+        if (dedupeKey && this.seenRecently(dedupeKey))
             return;
         this.upsertThread({ ...thread, status: thread.status === "active" ? "idle" : thread.status, lastSummary: summary });
         const markup = this.threadMarkup(thread, true, undefined);
         await this.telegram.sendMessage(this.config.allowedChatIds[0], formatStopMessage(thread, status, summary), markup);
-        if (eventKey)
-            this.state.data.sentEvents[eventKey] = Date.now();
+        if (dedupeKey)
+            this.state.data.sentEvents[dedupeKey] = Date.now();
         this.save();
     }
     async notifyUserInput(serverRequestId, params) {
@@ -268,6 +269,9 @@ function samePath(a, b) {
     if (!a || !b)
         return false;
     return a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+}
+function normalizeStopEventKey(eventKey) {
+    return eventKey.replace(/:(?:hook-stop|turn-completed)$/, ":stop");
 }
 function isTitleGenerationHook(payload) {
     const summary = String(payload.last_assistant_message ?? payload["last-assistant-message"] ?? "");
