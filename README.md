@@ -31,6 +31,22 @@ export CODEX_TG_TIMEOUT_SECONDS=900
 export CODEX_CLI_PATH=/absolute/path/to/codex
 ```
 
+If `codex-telegram-bridge run` prints `fetch failed` while Telegram works in your browser or PowerShell, Node is probably not using your system proxy. Set Node's environment proxy support:
+
+```sh
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+export NODE_USE_ENV_PROXY=1
+```
+
+PowerShell:
+
+```powershell
+[Environment]::SetEnvironmentVariable("HTTPS_PROXY", "http://127.0.0.1:7890", "User")
+[Environment]::SetEnvironmentVariable("HTTP_PROXY", "http://127.0.0.1:7890", "User")
+[Environment]::SetEnvironmentVariable("NODE_USE_ENV_PROXY", "1", "User")
+```
+
 `CODEX_TG_CHAT_IDS` may be used instead of `CODEX_TG_CHAT_ID` for a comma-separated allow-list.
 
 ## Configure Codex hooks
