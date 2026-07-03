@@ -10,7 +10,14 @@ export class TelegramClient {
         await this.call("editMessageText", { chat_id: chatId, message_id: messageId, text, disable_web_page_preview: true, reply_markup: replyMarkup });
     }
     async answerCallbackQuery(callbackQueryId, text) {
-        await this.call("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
+        try {
+            await this.call("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
+        }
+        catch (error) {
+            if (error instanceof Error && error.message.includes("HTTP 400"))
+                return;
+            throw error;
+        }
     }
     async getUpdates(offset) {
         return this.call("getUpdates", { offset, timeout: 30, allowed_updates: ["message", "callback_query"] });
@@ -21,9 +28,10 @@ export class TelegramClient {
             headers: { "content-type": "application/json" },
             body: JSON.stringify(body)
         });
+        const bodyText = await response.text();
         if (!response.ok)
-            throw new Error(`Telegram ${method} failed with HTTP ${response.status}`);
-        const json = (await response.json());
+            throw new Error(`Telegram ${method} failed with HTTP ${response.status}: ${bodyText}`);
+        const json = JSON.parse(bodyText);
         if (!json.ok)
             throw new Error(`Telegram ${method} failed: ${json.description ?? "unknown error"}`);
         return json.result;

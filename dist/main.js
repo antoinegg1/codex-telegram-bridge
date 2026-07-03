@@ -66,9 +66,16 @@ async function run() {
     await core.refreshThreads();
     const inbox = new HookInbox(config.stateDir, (event) => core.handleHookEvent(event));
     const poller = new TelegramPoller(telegram, async (update) => {
-        await core.handleTelegramUpdate(update);
-        state.data.telegramOffset = update.update_id + 1;
-        store.save(state);
+        try {
+            await core.handleTelegramUpdate(update);
+        }
+        catch (error) {
+            logger.log("telegram.update.error", { update_id: update.update_id, error: String(error) });
+        }
+        finally {
+            state.data.telegramOffset = update.update_id + 1;
+            store.save(state);
+        }
     }, state.data.telegramOffset);
     const interval = setInterval(() => {
         void inbox.drain().catch((error) => logger.log("hook.drain.error", String(error)));

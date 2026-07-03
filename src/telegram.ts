@@ -18,7 +18,12 @@ export class TelegramClient implements TelegramTransport {
   }
 
   async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
-    await this.call("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
+    try {
+      await this.call("answerCallbackQuery", { callback_query_id: callbackQueryId, text });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("HTTP 400")) return;
+      throw error;
+    }
   }
 
   async getUpdates(offset?: number): Promise<TelegramUpdate[]> {
@@ -31,8 +36,9 @@ export class TelegramClient implements TelegramTransport {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body)
     });
-    if (!response.ok) throw new Error(`Telegram ${method} failed with HTTP ${response.status}`);
-    const json = (await response.json()) as TelegramApiResponse<T>;
+    const bodyText = await response.text();
+    if (!response.ok) throw new Error(`Telegram ${method} failed with HTTP ${response.status}: ${bodyText}`);
+    const json = JSON.parse(bodyText) as TelegramApiResponse<T>;
     if (!json.ok) throw new Error(`Telegram ${method} failed: ${json.description ?? "unknown error"}`);
     return json.result as T;
   }
