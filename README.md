@@ -4,39 +4,100 @@ Telegram bridge for local Codex sessions. It sends one Telegram message when Cod
 
 This project does not implement command approval. If Codex asks for command/file approval, the bridge will not expose an approve button in Telegram.
 
-## Install
+## Complete Setup
+
+### 1. Install dependencies
+
+You need:
+
+- Node.js 20 or newer, with npm
+- Codex CLI installed and usable from a terminal
+- A Telegram bot token from BotFather
+
+Check the local tools:
+
+```sh
+node --version
+npm --version
+codex --version
+```
+
+If `codex` is not on `PATH`, set `CODEX_CLI_PATH` later to the absolute path of your Codex executable.
+
+### 2. Install the bridge
 
 ```sh
 npm install -g https://github.com/antoinegg1/codex-telegram-bridge/archive/refs/heads/main.tar.gz
 ```
 
-Set the bot token and the one Telegram chat that may control Codex:
+Confirm the command is available:
+
+```sh
+codex-telegram-bridge --help
+```
+
+### 3. Create a Telegram bot and set the token
+
+In Telegram, open `@BotFather`, run `/newbot`, and copy the bot token. Keep it secret and never commit it to Git.
+
+macOS/Linux:
 
 ```sh
 export CODEX_TG_BOT_TOKEN="123456:token"
-export CODEX_TG_CHAT_ID="123456789"
 ```
 
-PowerShell:
+Add the same export to your shell profile, such as `~/.zshrc` or `~/.bashrc`, if you want it to persist.
+
+Windows PowerShell:
 
 ```powershell
-[Environment]::SetEnvironmentVariable("CODEX_TG_BOT_TOKEN", "123456:token", "User")
-[Environment]::SetEnvironmentVariable("CODEX_TG_CHAT_ID", "123456789", "User")
+$env:CODEX_TG_BOT_TOKEN = "123456:token"
+[Environment]::SetEnvironmentVariable("CODEX_TG_BOT_TOKEN", $env:CODEX_TG_BOT_TOKEN, "User")
 ```
 
-To discover `CODEX_TG_CHAT_ID` automatically, set `CODEX_TG_BOT_TOKEN`, send any message to your bot in Telegram, then run:
+### 4. Discover and set your Telegram chat id
+
+Send any message to your new bot in Telegram, then run:
 
 ```sh
 codex-telegram-bridge chat-id
 ```
 
-The command waits up to 60 seconds and prints the exact environment-variable command for your shell.
+The command waits up to 60 seconds and prints your `CODEX_TG_CHAT_ID`.
+
+macOS/Linux:
+
+```sh
+export CODEX_TG_CHAT_ID="123456789"
+```
+
+Add the same export to your shell profile if you want it to persist.
+
+Windows PowerShell:
+
+```powershell
+$env:CODEX_TG_CHAT_ID = "123456789"
+[Environment]::SetEnvironmentVariable("CODEX_TG_CHAT_ID", $env:CODEX_TG_CHAT_ID, "User")
+```
+
+Use the value printed by `codex-telegram-bridge chat-id`; `123456789` is only an example. Close and reopen terminals after setting permanent Windows user environment variables, or keep the `$env:` values in the current terminal.
+
+### 5. Optional configuration
 
 Optional:
 
 ```sh
 export CODEX_TG_TIMEOUT_SECONDS=900
 export CODEX_CLI_PATH=/absolute/path/to/codex
+```
+
+Windows PowerShell:
+
+```powershell
+$env:CODEX_TG_TIMEOUT_SECONDS = "900"
+$env:CODEX_CLI_PATH = "C:\absolute\path\to\codex.exe"
+[Environment]::SetEnvironmentVariable("CODEX_TG_TIMEOUT_SECONDS", $env:CODEX_TG_TIMEOUT_SECONDS, "User")
+[Environment]::SetEnvironmentVariable("CODEX_CLI_PATH", $env:CODEX_CLI_PATH, "User")
 ```
 
 If `codex-telegram-bridge run` prints `fetch failed` while Telegram works in your browser or PowerShell, Node is probably not using your system proxy. Set Node's environment proxy support:
@@ -57,7 +118,7 @@ PowerShell:
 
 `CODEX_TG_CHAT_IDS` may be used instead of `CODEX_TG_CHAT_ID` for a comma-separated allow-list.
 
-## Configure Codex hooks
+### 6. Configure Codex hooks
 
 ```sh
 codex-telegram-bridge install-codex-hooks
@@ -71,13 +132,16 @@ The installer:
 - appends a marked global instruction block to `~/.codex/AGENTS.md`
 - removes legacy Telegram approval hooks that call the old PowerShell scripts, when found
 
-## Run
+### 7. Verify and start
 
 ```sh
+codex-telegram-bridge doctor
 codex-telegram-bridge run
 ```
 
 The bridge uses Telegram long polling, so no public webhook URL is needed.
+
+Leave `codex-telegram-bridge run` running while you want Telegram notifications and replies to work. Start it again on each machine where you want the bridge active.
 
 ## Telegram commands
 
