@@ -1,0 +1,259 @@
+import type { BridgeConfig } from "./config.js";
+import { BridgeState, StateStore } from "./state.js";
+import type { BridgeLogger } from "./logger.js";
+import type { CodexController, HookInboxEvent, PendingRequest, RequestQuestion, TelegramButton, TelegramReplyMarkup, TelegramTransport, TelegramUpdate, ThreadRecord } from "./types.js";
+import { formatStopMessage, formatThreadList, formatThreadStatus, titleForThread, truncateText } from "./text.js";
+
+export class BridgeCore {
+  constructor(readonly config: BridgeConfig, readonly state: BridgeState, readonly store: StateStore, readonly telegram: TelegramTransport, readonly codex: CodexController, readonly logger: BridgeLogger) {}
+
+  async refreshThreads(limit = 20): Promise<ThreadRecord[]> {
+    const threads = await this.codex.listThreads(limit);
+    for (const thread of threads) this.upsertThread(thread);
+    this.save();
+    return threads;
+  }
+
+  async notifyStopped(thread: ThreadRecord, status: string, summary: string, eventKey?: string): Promise<void> {
+    if (eventKey && this.seenRecently(eventKey)) return;
+    this.upsertThread({ ...thread, status: thread.status === "active" ? "idle" : thread.status, lastSummary: summary });
+    const markup = this.threadMarkup(thread, true, undefined);
+    await this.telegram.sendMessage(this.config.allowedChatIds[0], formatStopMessage(thread, status, summary), markup);
+    if (eventKey) this.state.data.sentEvents[eventKey] = Date.now();
+    this.save();
+  }
+
+  async notifyUserInput(serverRequestId: string | number, params: { threadId: string; turnId?: string; itemId?: string; questions: RequestQuestion[] }): Promise<void> {
+    const thread = this.state.data.threads[params.threadId] ?? await this.codex.readThread(params.threadId) ?? this.syntheticThread(params.threadId);
+    this.upsertThread({ ...thread, status: "active", activeFlags: ["waitingOnUserInput"] });
+    const requestId = String(serverRequestId);
+    const now = Date.now();
+    const pending: PendingRequest = {
+      id: requestId,
+      serverRequestId,
+      threadId: params.threadId,
+      turnId: params.turnId,
+      itemId: params.itemId,
+      questions: params.questions,
+      answers: {},
+      chatId: this.config.allowedChatIds[0],
+      createdAt: now,
+      expiresAt: now + this.config.timeoutSeconds * 1000,
+      status: "open"
+    };
+    this.state.data.pendingRequests[requestId] = pending;
+    const sent = await this.telegram.sendMessage(pending.chatId, this.formatRequestMessage(thread, pending), this.requestMarkup(pending));
+    pending.messageId = sent.message_id;
+    this.save();
+  }
+
+  async handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
+    this.logger.log("telegram.update", update);
+    if (update.callback_query) {
+      const chatId = String(update.callback_query.message?.chat.id ?? update.callback_query.from?.id ?? "");
+      if (!this.authorized(chatId)) {
+        await this.telegram.answerCallbackQuery(update.callback_query.id, "Not authorized");
+        return;
+      }
+      await this.handleCallback(chatId, update.callback_query.message?.message_id, update.callback_query.data ?? "", update.callback_query.id);
+      return;
+    }
+    if (update.message?.text) {
+      const chatId = String(update.message.chat.id);
+      if (!this.authorized(chatId)) return;
+      await this.handleText(chatId, update.message.text.trim());
+    }
+  }
+
+  async handleText(chatId: string, text: string): Promise<void> {
+    if (text === "/help" || text === "/start") {
+      await this.telegram.sendMessage(chatId, "Commands:\n/threads - choose a Codex thread\n/status - show selected thread\n\nSelect a thread first, then send text to continue it when it is stopped or idle.");
+      return;
+    }
+    if (text === "/threads") {
+      await this.sendThreadList(chatId);
+      return;
+    }
+    if (text === "/status") {
+      const thread = this.selectedThread(chatId);
+      await this.telegram.sendMessage(chatId, thread ? `Selected: ${titleForThread(thread)}\nStatus: ${formatThreadStatus(thread)}` : "No thread selected. Use /threads.");
+      return;
+    }
+    const thread = this.selectedThread(chatId);
+    if (!thread) {
+      await this.telegram.sendMessage(chatId, "Choose a Codex thread first.", await this.threadListMarkup());
+      return;
+    }
+    if (thread.status === "active") {
+      await this.telegram.sendMessage(chatId, `Codex is still running in "${titleForThread(thread)}". Wait until it stops, then reply again.`);
+      return;
+    }
+    if (!thread.continuable) {
+      await this.telegram.sendMessage(chatId, `This notification is not tied to a resumable Codex thread. Use /threads to choose a real thread.`);
+      return;
+    }
+    await this.codex.resumeThread(thread.id);
+    await this.codex.startTurn(thread.id, text);
+    this.upsertThread({ ...thread, status: "active", activeFlags: [] });
+    await this.telegram.sendMessage(chatId, `Sent to Codex: ${titleForThread(thread)}`);
+    this.save();
+  }
+
+  async handleCallback(chatId: string, messageId: number | undefined, callbackData: string, callbackQueryId?: string): Promise<void> {
+    const action = this.state.resolveCallback(callbackData);
+    if (!action) {
+      if (callbackQueryId) await this.telegram.answerCallbackQuery(callbackQueryId, "Expired button");
+      return;
+    }
+    if (callbackQueryId) await this.telegram.answerCallbackQuery(callbackQueryId);
+    if (action.type === "selectThread") {
+      this.state.data.selectedThreadByChat[chatId] = action.threadId;
+      this.save();
+      await this.telegram.sendMessage(chatId, `Selected: ${titleForThread(this.state.data.threads[action.threadId] ?? this.syntheticThread(action.threadId))}`);
+      return;
+    }
+    if (action.type === "continueThread") {
+      this.state.data.selectedThreadByChat[chatId] = action.threadId;
+      this.save();
+      await this.telegram.sendMessage(chatId, `Reply with the next Codex message for: ${titleForThread(this.state.data.threads[action.threadId] ?? this.syntheticThread(action.threadId))}`);
+      return;
+    }
+    if (action.type === "terminateThread") {
+      await this.terminate(chatId, messageId, action.threadId, action.requestId);
+      return;
+    }
+    await this.answerChoice(chatId, messageId, action.requestId, action.questionId, action.answer);
+  }
+
+  async expirePendingRequests(now = Date.now()): Promise<void> {
+    for (const pending of Object.values(this.state.data.pendingRequests)) {
+      if (pending.status !== "open" || pending.expiresAt > now) continue;
+      pending.status = "timed_out";
+      await this.codex.answerUserInput(pending.serverRequestId, {});
+      if (pending.messageId) await this.telegram.editMessageText(pending.chatId, pending.messageId, `${this.formatRequestMessage(this.state.data.threads[pending.threadId] ?? this.syntheticThread(pending.threadId), pending)}\n\nTimed out.`);
+    }
+    this.save();
+  }
+
+  async handleHookEvent(event: HookInboxEvent): Promise<void> {
+    this.logger.log("hook.event", event);
+    const payload = typeof event.payload === "object" && event.payload ? event.payload as Record<string, unknown> : {};
+    const eventName = String(payload.hook_event_name ?? payload.type ?? "Codex");
+    if (/permission|approval/i.test(eventName)) return;
+    const cwd = String(payload.cwd ?? event.cwd);
+    let threadId = String(payload.thread_id ?? payload.threadId ?? payload["thread-id"] ?? "");
+    if (!threadId && cwd) {
+      const threads = await this.refreshThreads(30);
+      threadId = threads.find((thread) => samePath(thread.cwd, cwd))?.id ?? "";
+    }
+    const thread = threadId ? this.state.data.threads[threadId] ?? this.syntheticThread(threadId, cwd) : this.syntheticThread(`hook:${event.id}`, cwd, false);
+    const summary = String(payload.last_assistant_message ?? payload["last-assistant-message"] ?? payload.summary ?? eventName);
+    const turnId = String(payload.turn_id ?? payload.turnId ?? payload["turn-id"] ?? "");
+    const key = threadId && turnId ? `${threadId}:${turnId}:hook-stop` : event.id;
+    await this.notifyStopped(thread, eventName, truncateText(summary, 1200), key);
+  }
+
+  async sendThreadList(chatId: string): Promise<void> {
+    const threads = await this.refreshThreads(20);
+    await this.telegram.sendMessage(chatId, formatThreadList(threads), this.makeThreadListMarkup(threads));
+  }
+
+  private async terminate(chatId: string, messageId: number | undefined, threadId: string, requestId?: string): Promise<void> {
+    const pending = requestId ? this.state.data.pendingRequests[requestId] : undefined;
+    if (pending && pending.status === "open") {
+      pending.status = "terminated";
+      await this.codex.answerUserInput(pending.serverRequestId, {});
+    }
+    const thread = this.state.data.threads[threadId];
+    if (thread?.status === "active") await this.codex.interruptThread(threadId, this.state.data.activeTurns[threadId] ?? thread.lastTurnId);
+    if (messageId) await this.telegram.editMessageText(chatId, messageId, `Closed: ${titleForThread(thread ?? this.syntheticThread(threadId))}`);
+    this.save();
+  }
+
+  private async answerChoice(chatId: string, messageId: number | undefined, requestId: string, questionId: string, answer: string): Promise<void> {
+    const pending = this.state.data.pendingRequests[requestId];
+    if (!pending || pending.status !== "open") {
+      await this.telegram.sendMessage(chatId, "That request is already closed.");
+      return;
+    }
+    pending.answers[questionId] = [answer];
+    const complete = pending.questions.every((question) => pending.answers[question.id]?.length);
+    if (!complete) {
+      if (messageId) await this.telegram.editMessageText(chatId, messageId, this.formatRequestMessage(this.state.data.threads[pending.threadId] ?? this.syntheticThread(pending.threadId), pending), this.requestMarkup(pending));
+      this.save();
+      return;
+    }
+    pending.status = "answered";
+    await this.codex.answerUserInput(pending.serverRequestId, Object.fromEntries(Object.entries(pending.answers).map(([id, answers]) => [id, { answers }])));
+    if (messageId) await this.telegram.editMessageText(chatId, messageId, `${this.formatRequestMessage(this.state.data.threads[pending.threadId] ?? this.syntheticThread(pending.threadId), pending)}\n\nAnswered.`);
+    this.save();
+  }
+
+  private async threadListMarkup(): Promise<TelegramReplyMarkup> {
+    return this.makeThreadListMarkup(await this.refreshThreads(10));
+  }
+
+  private makeThreadListMarkup(threads: ThreadRecord[]): TelegramReplyMarkup {
+    return { inline_keyboard: threads.slice(0, 10).map((thread) => [{ text: titleForThread(thread).slice(0, 48), callback_data: this.state.callback({ type: "selectThread", threadId: thread.id }) }]) };
+  }
+
+  private threadMarkup(thread: ThreadRecord, includeContinue: boolean, requestId?: string): TelegramReplyMarkup {
+    const row: TelegramButton[] = [{ text: "Select thread", callback_data: this.state.callback({ type: "selectThread", threadId: thread.id }) }];
+    if (includeContinue && thread.continuable) row.push({ text: "Continue", callback_data: this.state.callback({ type: "continueThread", threadId: thread.id }) });
+    row.push({ text: "Terminate", callback_data: this.state.callback({ type: "terminateThread", threadId: thread.id, requestId }) });
+    return { inline_keyboard: [row] };
+  }
+
+  private requestMarkup(pending: PendingRequest): TelegramReplyMarkup {
+    const rows: TelegramButton[][] = [];
+    for (const question of pending.questions) {
+      for (const option of question.options ?? []) rows.push([{ text: option.label.slice(0, 56), callback_data: this.state.callback({ type: "answerChoice", requestId: pending.id, questionId: question.id, answer: option.label }) }]);
+    }
+    rows.push([{ text: "Select thread", callback_data: this.state.callback({ type: "selectThread", threadId: pending.threadId }) }, { text: "Terminate", callback_data: this.state.callback({ type: "terminateThread", threadId: pending.threadId, requestId: pending.id }) }]);
+    return { inline_keyboard: rows };
+  }
+
+  private formatRequestMessage(thread: ThreadRecord, pending: PendingRequest): string {
+    const lines = [`Codex: ${titleForThread(thread)}`, `Status: waiting for your decision`, `Timeout: ${new Date(pending.expiresAt).toLocaleString()}`, ""];
+    for (const question of pending.questions) {
+      lines.push(question.header ? `${question.header}: ${question.question}` : question.question);
+      for (const option of question.options ?? []) lines.push(`- ${option.label}${option.description ? `: ${option.description}` : ""}`);
+      const chosen = pending.answers[question.id]?.join(", ");
+      if (chosen) lines.push(`Selected: ${chosen}`);
+      lines.push("");
+    }
+    return truncateText(lines.join("\n"));
+  }
+
+  private selectedThread(chatId: string): ThreadRecord | undefined {
+    const id = this.state.data.selectedThreadByChat[chatId];
+    return id ? this.state.data.threads[id] : undefined;
+  }
+
+  private authorized(chatId: string): boolean {
+    return this.config.allowedChatIds.includes(chatId);
+  }
+
+  private upsertThread(thread: ThreadRecord): void {
+    this.state.data.threads[thread.id] = { ...this.state.data.threads[thread.id], ...thread, title: titleForThread(thread), updatedAt: thread.updatedAt || Date.now() };
+    if (thread.lastTurnId) this.state.data.activeTurns[thread.id] = thread.lastTurnId;
+  }
+
+  private syntheticThread(id: string, cwd?: string, continuable = true): ThreadRecord {
+    return { id, title: id, cwd, status: "notLoaded", activeFlags: [], updatedAt: Date.now(), continuable };
+  }
+
+  private seenRecently(key: string): boolean {
+    const previous = this.state.data.sentEvents[key];
+    return typeof previous === "number" && Date.now() - previous < 60_000;
+  }
+
+  private save(): void {
+    this.store.save(this.state);
+  }
+}
+
+function samePath(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  return a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+}

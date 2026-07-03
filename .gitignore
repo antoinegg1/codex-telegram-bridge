@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+*.log
+logs/
+state.json
+inbox/
+*.local
+npm-debug.log*
