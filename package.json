@@ -14,8 +14,7 @@
   "scripts": {
     "build": "node ./node_modules/typescript/bin/tsc -p tsconfig.json",
     "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
-    "test": "node ./node_modules/vitest/vitest.mjs run",
-    "prepare": "npm run build"
+    "test": "node ./node_modules/vitest/vitest.mjs run"
   },
   "keywords": [
     "codex",

@@ -1,0 +1,40 @@
+import type { BridgeConfig } from "./config.js";
+import { BridgeState, StateStore } from "./state.js";
+import type { BridgeLogger } from "./logger.js";
+import type { CodexController, HookInboxEvent, RequestQuestion, TelegramTransport, TelegramUpdate, ThreadRecord } from "./types.js";
+export declare class BridgeCore {
+    readonly config: BridgeConfig;
+    readonly state: BridgeState;
+    readonly store: StateStore;
+    readonly telegram: TelegramTransport;
+    readonly codex: CodexController;
+    readonly logger: BridgeLogger;
+    constructor(config: BridgeConfig, state: BridgeState, store: StateStore, telegram: TelegramTransport, codex: CodexController, logger: BridgeLogger);
+    refreshThreads(limit?: number): Promise<ThreadRecord[]>;
+    notifyStopped(thread: ThreadRecord, status: string, summary: string, eventKey?: string): Promise<void>;
+    notifyUserInput(serverRequestId: string | number, params: {
+        threadId: string;
+        turnId?: string;
+        itemId?: string;
+        questions: RequestQuestion[];
+    }): Promise<void>;
+    handleTelegramUpdate(update: TelegramUpdate): Promise<void>;
+    handleText(chatId: string, text: string): Promise<void>;
+    handleCallback(chatId: string, messageId: number | undefined, callbackData: string, callbackQueryId?: string): Promise<void>;
+    expirePendingRequests(now?: number): Promise<void>;
+    handleHookEvent(event: HookInboxEvent): Promise<void>;
+    sendThreadList(chatId: string): Promise<void>;
+    private terminate;
+    private answerChoice;
+    private threadListMarkup;
+    private makeThreadListMarkup;
+    private threadMarkup;
+    private requestMarkup;
+    private formatRequestMessage;
+    private selectedThread;
+    private authorized;
+    private upsertThread;
+    private syntheticThread;
+    private seenRecently;
+    private save;
+}
